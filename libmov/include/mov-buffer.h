@@ -28,6 +28,8 @@ struct mov_buffer_t
 	/// get buffer read/write position
 	/// @return >=0-current read/write position, <0-error
 	uint64_t (*tell)(void* param);
+
+	void(*ftyp_completed)(void* param);
 };
 
 #endif /* !_mov_buffer_h_ */
