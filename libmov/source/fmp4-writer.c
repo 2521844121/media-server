@@ -206,17 +206,18 @@ static int fmp4_write_mfra(struct mov_t* mov)
 
 static int fmp4_add_fragment_entry(struct mov_track_t* track, uint64_t time, uint64_t offset)
 {
-	if (track->frag_count >= track->frag_capacity)
-	{
-		void* p = realloc(track->frags, sizeof(struct mov_fragment_t) * (track->frag_capacity + 64));
-		if (!p) return ENOMEM;
-		track->frags = p;
-		track->frag_capacity += 64;
-	}
+	//mse场景暂时用不着该逻辑块，屏蔽掉防止内存一直增长
+	//if (track->frag_count >= track->frag_capacity)
+	//{
+	//	void* p = realloc(track->frags, sizeof(struct mov_fragment_t) * (track->frag_capacity + 64));
+	//	if (!p) return ENOMEM;
+	//	track->frags = p;
+	//	track->frag_capacity += 64;
+	//}
 
-	track->frags[track->frag_count].time = time;
-	track->frags[track->frag_count].offset = offset;
-	++track->frag_count;
+	//track->frags[track->frag_count].time = time;
+	//track->frags[track->frag_count].offset = offset;
+	//++track->frag_count;
 	return 0;
 }
 
@@ -243,6 +244,8 @@ static int fmp4_write_fragment(struct fmp4_writer_t* writer)
 		{
 			mov_write_ftyp(mov);
 			fmp4_write_moov(mov);
+			const struct mov_ioutil_t *io = &mov->io;
+			io->io.ftyp_completed(io->param);
 		}
 
 		writer->has_moov = 1;
@@ -389,11 +392,19 @@ void fmp4_writer_destroy(struct fmp4_writer_t* writer)
 	free(writer);
 }
 
-int fmp4_writer_write(struct fmp4_writer_t* writer, int idx, const void* data, size_t bytes, int64_t pts, int64_t dts, int flags)
+int fmp4_writer_write(struct fmp4_writer_t* writer, int idx, const void* data, size_t bytes, int64_t pts, int64_t dts, int flags){
+    return fmp4_writer_write_l(writer, idx, data, bytes, pts, dts, flags, 0);
+}
+
+int fmp4_writer_write_l(struct fmp4_writer_t* writer, int idx, const void* data, size_t bytes, int64_t pts, int64_t dts, int flags, int add_nalu_size)
 {
     int64_t duration;
 	struct mov_track_t* track;
 	struct mov_sample_t* sample;
+
+	if(add_nalu_size){
+        bytes += 4;
+	}
 
 	if (idx < 0 || idx >= (int)writer->mov.track_count)
 		return -ENOENT;
@@ -432,7 +443,19 @@ int fmp4_writer_write(struct fmp4_writer_t* writer, int idx, const void* data, s
 	sample->data = malloc(bytes);
 	if (NULL == sample->data)
 		return -ENOMEM;
-	memcpy(sample->data, data, bytes);
+
+    if (!add_nalu_size) {
+        memcpy(sample->data, data, bytes);
+    } else {
+        uint8_t nalu_size_buf[4] = {0};
+        size_t nalu_size = bytes - 4;
+        nalu_size_buf[0] = (uint8_t) ((nalu_size >> 24) & 0xFF);
+        nalu_size_buf[1] = (uint8_t) ((nalu_size >> 16) & 0xFF);
+        nalu_size_buf[2] = (uint8_t) ((nalu_size >> 8) & 0xFF);
+        nalu_size_buf[3] = (uint8_t) ((nalu_size >> 0) & 0xFF);
+        memcpy(sample->data, nalu_size_buf, 4);
+        memcpy((char *)sample->data + 4, data, nalu_size);
+    }
 
     if (INT64_MIN == track->start_dts)
         track->start_dts = sample->dts;
